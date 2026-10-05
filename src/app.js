@@ -7,6 +7,7 @@ import apiRouter from "./routes/index.js";
 import notFoundHandler from "./middlewares/notFound.middleware.js";
 import errorHandler from "./middlewares/errorHandler.middleware.js";
 import ApiResponse from "./utils/apiResponse.js";
+import { connectDB } from "./config/db.js";
 
 const app = express();
 
@@ -70,6 +71,19 @@ app.use("/api", limiter);
 // Request body parsers
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// Serverless DB connection middleware (guarantees DB connection in Vercel serverless environment)
+app.use(async (req, res, next) => {
+  if (req.path === "/" || req.path === "/api/health") {
+    return next();
+  }
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Root route welcoming to API
 app.get("/", (req, res) => {

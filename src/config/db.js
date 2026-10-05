@@ -3,15 +3,23 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-let isConnected = false;
+// Global cache for serverless environments (e.g. Vercel)
+let cached = global.mongoose;
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
 
 /**
- * Connects to MongoDB with reconnection logic and listeners
+ * Connects to MongoDB with reconnection logic, pooling, and serverless cache
  */
 export const connectDB = async () => {
-  if (isConnected) {
-    console.log("[MongoDB] Using existing database connection");
+  // If readyState is 1 (connected), return existing connection immediately
+  if (mongoose.connection.readyState === 1) {
     return mongoose.connection;
+  }
+
+  if (cached.conn) {
+    return cached.conn;
   }
 
   const mongoUri = process.env.MONGO_URI;
@@ -21,33 +29,28 @@ export const connectDB = async () => {
     throw new Error("MONGO_URI is missing in environment variables");
   }
 
+  if (!cached.promise) {
+    cached.promise = mongoose
+      .connect(mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+        autoIndex: process.env.NODE_ENV !== "production",
+      })
+      .then((m) => {
+        console.log(`[MongoDB] Connected successfully to: ${m.connection.host}/${m.connection.name}`);
+        return m.connection;
+      })
+      .catch((err) => {
+        cached.promise = null;
+        console.error(`[MongoDB] Connection error: ${err.message}`);
+        throw err;
+      });
+  }
+
   try {
-    const conn = await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 5000,
-      autoIndex: process.env.NODE_ENV !== "production", // Build indexes in dev, skip in high-traffic prod
-    });
-
-    isConnected = conn.connections[0].readyState === 1;
-    console.log(`[MongoDB] Connected successfully to host: ${conn.connection.host}, database: ${conn.connection.name}`);
-
-    // Connection event listeners
-    mongoose.connection.on("error", (err) => {
-      console.error("[MongoDB] Connection runtime error:", err.message);
-    });
-
-    mongoose.connection.on("disconnected", () => {
-      console.warn("[MongoDB] Connection lost. Attempting reconnect...");
-      isConnected = false;
-    });
-
-    mongoose.connection.on("reconnected", () => {
-      console.log("[MongoDB] Reconnected successfully");
-      isConnected = true;
-    });
-
-    return conn;
+    cached.conn = await cached.promise;
+    return cached.conn;
   } catch (error) {
-    console.error(`[MongoDB] Initial connection failed: ${error.message}`);
+    cached.promise = null;
     throw error;
   }
 };
@@ -58,7 +61,8 @@ export const connectDB = async () => {
 export const disconnectDB = async () => {
   try {
     await mongoose.connection.close();
-    isConnected = false;
+    cached.conn = null;
+    cached.promise = null;
     console.log("[MongoDB] Connection closed gracefully");
   } catch (error) {
     console.error("[MongoDB] Error during disconnection:", error.message);

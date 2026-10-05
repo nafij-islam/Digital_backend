@@ -1,6 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import app from "../src/app.js";
+import { disconnectDB } from "../src/config/db.js";
 
 let server;
 let baseUrl;
@@ -17,6 +18,7 @@ describe("Express Route Integration Tests", () => {
   });
 
   after(async () => {
+    await disconnectDB();
     await new Promise((resolve) => server.close(resolve));
   });
 
